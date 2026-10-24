@@ -1,0 +1,22 @@
+# Render Blueprint (optional: you can also enter the same values by hand in the dashboard).
+services:
+  - type: web
+    name: construction-intelligence
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT   # the entry point is app.py, not main.py
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.3
+      - key: OPENAI_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: OPENAI_MODEL
+        value: openai/gpt-oss-20b
+      - key: OPENAI_VISION_MODEL
+        value: qwen/qwen3.8-27b
+      - key: CORS_ORIGINS
+        value: https://construction-intelligence-7.netlify.app,http://localhost:5173
+      - key: OPENAI_API_KEY
+        sync: false            # secret: enter it in the Render dashboard, never in Git
