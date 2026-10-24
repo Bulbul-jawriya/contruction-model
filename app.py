@@ -1,16 +1,4 @@
-"""Construction Intelligence: single-file FastAPI backend.
 
-Modules: site safety (vision AI), crack analysis (vision AI), property valuation (AI),
-project planning (computed schedule + AI estimates), daily site assistant (AI),
-weather advisory (Open-Meteo or user-entered conditions + rules + AI guidance),
-construction knowledge assistant (AI).
-
-There are NO canned or demo results. If the AI service is unavailable the API returns an
-explicit error (mode "error"); it never substitutes made-up analysis.
-
-Run:  uvicorn app:app --host 0.0.0.0 --port $PORT      (local: python app.py)
-See README.md for configuration, deployment and limits.
-"""
 import base64
 import io
 import json
@@ -22,6 +10,7 @@ import time
 from datetime import date, datetime, timedelta, timezone
 from math import ceil
 from typing import Any, Literal, Optional
+from zoneinfo import ZoneInfo
 
 import cv2
 import httpx
@@ -501,7 +490,18 @@ class LocationNotFound(WeatherError):
         super().__init__(message, 404)
 
 
-WX_USER_AGENT = "construction-intelligence/2.1 (site-weather-advisory)"
+MET_URL = "https://api.met.no/weatherapi/locationforecast/2.0/compact"      # backup forecast (no key, global)
+NOMINATIM = "https://nominatim.openstreetmap.org/search"                      # backup place search (no key)
+_tz_hint: dict = {}             # (lat, lon) -> IANA zone name learned from Open-Meteo geocoding, used to split MET Norway hours into local days
+
+
+def _wx_user_agent() -> str:
+    """MET Norway and Nominatim block anonymous clients: the User-Agent must name the app and give a contact.
+    Set WEATHER_CONTACT to your e-mail address or website; the default is this app's public site."""
+    contact = os.getenv("WEATHER_CONTACT", "").strip() or "https://construction-intelligence-7.netlify.app"
+    return f"construction-intelligence/2.2 ({contact})"
+
+
 WX_TTL_SECONDS = 600            # forecasts barely change in 10 minutes; caching also protects the provider's per-IP limits
 _wx_cache: dict = {}
 
@@ -515,7 +515,7 @@ def _wx_reason(r: "httpx.Response") -> Optional[str]:
     return str(reason)[:200] if reason else None
 
 
-def _get(url: str, params: dict) -> dict:
+def _get(url: str, params: dict, attempts: int = 3) -> dict:
     """GET JSON from Open-Meteo. Logs the real status/body on the server, retries transient failures (429, 5xx, network),
     and raises WeatherError with a message that says what actually went wrong."""
     key = (url, tuple(sorted((k, str(v)) for k, v in params.items())))
@@ -523,10 +523,10 @@ def _get(url: str, params: dict) -> dict:
     if hit and time.time() - hit[0] < WX_TTL_SECONDS:
         return hit[1]
     last: Optional[WeatherError] = None
-    for attempt in range(3):
+    for attempt in range(attempts):
         retry_after = 0.0
         try:
-            r = httpx.get(url, params=params, headers={"User-Agent": WX_USER_AGENT, "Accept": "application/json"}, timeout=10)
+            r = httpx.get(url, params=params, headers={"User-Agent": _wx_user_agent(), "Accept": "application/json"}, timeout=10)
         except httpx.TimeoutException:
             log.warning("Open-Meteo timeout url=%s params=%s attempt=%d", url, params, attempt + 1)
             last = WeatherError("The weather service took too long to respond.", 504)
@@ -558,26 +558,131 @@ def _get(url: str, params: dict) -> dict:
                 last = WeatherError(f"The weather provider had a temporary problem (HTTP {r.status_code}).", 502)
             else:   # 4xx other than 429: retrying the same request cannot help
                 raise WeatherError(f"The weather provider rejected the request (HTTP {r.status_code}{': ' + reason if reason else ''}).", 502)
-        if attempt < 2:
-            time.sleep(retry_after or (0.7, 1.5)[attempt])
+        if attempt < attempts - 1:
+            time.sleep(retry_after or (0.7, 1.5)[min(attempt, 1)])
     raise last
 
 
-def geocode(name: str) -> dict:
-    res = (_get(GEO, {"name": name, "count": 1, "language": "en", "format": "json"}).get("results") or [])
+def _geocode_open_meteo(name: str) -> dict:
+    res = (_get(GEO, {"name": name, "count": 1, "language": "en", "format": "json"}, attempts=2).get("results") or [])
     if not res:
         raise LocationNotFound(f"No location found for '{name}'. Try a nearby city name.")
     g = res[0]
+    if g.get("timezone"):
+        _tz_hint[(round(g["latitude"], 2), round(g["longitude"], 2))] = g["timezone"]
     return {"name": g.get("name"), "region": g.get("admin1"), "country": g.get("country"),
-            "latitude": g["latitude"], "longitude": g["longitude"]}
+            "latitude": g["latitude"], "longitude": g["longitude"], "provider": "open-meteo"}
+
+
+def _geocode_nominatim(name: str) -> dict:
+    res = _get(NOMINATIM, {"q": name, "format": "jsonv2", "limit": 1, "addressdetails": 1}, attempts=2)
+    if not isinstance(res, list) or not res:
+        raise LocationNotFound(f"No location found for '{name}'. Try a nearby city name.")
+    g = res[0]
+    try:
+        lat, lon = float(g["lat"]), float(g["lon"])
+    except (KeyError, TypeError, ValueError):
+        raise WeatherError("The place-search backup returned an unreadable response.", 502)
+    addr = g.get("address") or {}
+    return {"name": g.get("name") or str(g.get("display_name", name)).split(",")[0].strip(), "region": addr.get("state"),
+            "country": addr.get("country"), "latitude": lat, "longitude": lon, "provider": "nominatim"}
+
+
+def geocode(name: str) -> dict:
+    """Open-Meteo place search; if that service is failing (for example HTTP 429 on a shared IP) use OpenStreetMap Nominatim."""
+    try:
+        return _geocode_open_meteo(name)
+    except LocationNotFound:
+        raise
+    except WeatherError as primary:
+        log.warning("Open-Meteo place search failed (%s); trying Nominatim", primary)
+        try:
+            return _geocode_nominatim(name)
+        except LocationNotFound:
+            raise
+        except WeatherError as backup:
+            log.error("Nominatim backup also failed: %s", backup)
+            raise WeatherError(f"{primary} The backup place search also failed.", primary.status)
+
+
+def _tz_for(lat: float, lon: float):
+    name = _tz_hint.get((round(lat, 2), round(lon, 2)))
+    if name:
+        try:
+            return ZoneInfo(name)
+        except Exception:                        # unknown zone name or no tz database on this host
+            pass
+    return timezone(timedelta(hours=round(lon / 15 * 2) / 2))   # estimate from longitude (nearest half hour)
+
+
+def _met_to_open_meteo(raw: dict, days: int, tz) -> dict:
+    """Convert MET Norway locationforecast/2.0/compact into the Open-Meteo daily/current shape used by build_advisory.
+    Only values MET reports are filled in. Rain probability, UV and feels-like are not in the compact product: they stay None
+    (rules treat them as unknown, never as zero). Wind m/s -> km/h. Days are local days (tz)."""
+    series = (raw.get("properties") or {}).get("timeseries") or []
+    num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)    # noqa: E731
+    by_day: dict = {}
+    first = None
+    for pt in series:
+        try:
+            t = datetime.fromisoformat(str(pt["time"]).replace("Z", "+00:00")).astimezone(tz)
+            data = pt["data"]
+            det = data["instant"]["details"]
+        except (KeyError, ValueError, TypeError, AttributeError):
+            continue
+        first = first or (det, data)
+        d = by_day.setdefault(t.date(), {"t": [], "w": [], "rain": 0.0, "rain_seen": False, "storm": False})
+        if num(det.get("air_temperature")):
+            d["t"].append(det["air_temperature"])
+        if num(det.get("wind_speed")):
+            d["w"].append(det["wind_speed"] * 3.6)
+        blk = data.get("next_1_hours") or data.get("next_6_hours") or {}     # hourly where available, 6-hourly in the tail
+        amount = (blk.get("details") or {}).get("precipitation_amount")
+        if num(amount):
+            d["rain"] += amount
+            d["rain_seen"] = True
+        if "thunder" in str((blk.get("summary") or {}).get("symbol_code") or ""):
+            d["storm"] = True
+    dates = sorted(by_day)[:days]
+    out = {"_provider": "met-norway", "_retrieved_at": raw.get("_retrieved_at"), "current": None, "daily": {
+        "time": [x.isoformat() for x in dates],
+        "weather_code": [95 if by_day[x]["storm"] else None for x in dates],
+        "temperature_2m_max": [max(by_day[x]["t"]) if by_day[x]["t"] else None for x in dates],
+        "temperature_2m_min": [min(by_day[x]["t"]) if by_day[x]["t"] else None for x in dates],
+        "apparent_temperature_max": [None] * len(dates),
+        "precipitation_sum": [round(by_day[x]["rain"], 1) if by_day[x]["rain_seen"] else None for x in dates],
+        "precipitation_probability_max": [None] * len(dates),
+        "wind_speed_10m_max": [round(max(by_day[x]["w"]), 1) if by_day[x]["w"] else None for x in dates],
+        "uv_index_max": [None] * len(dates)}}
+    if first:
+        det, data = first
+        n1 = ((data.get("next_1_hours") or {}).get("details") or {}).get("precipitation_amount")
+        out["current"] = {"temperature_2m": det.get("air_temperature"),
+                          "wind_speed_10m": round(det["wind_speed"] * 3.6, 1) if num(det.get("wind_speed")) else None,
+                          "precipitation": n1 if num(n1) else None}
+    return out
+
+
+def _fetch_met(lat: float, lon: float, days: int) -> dict:
+    raw = _get(MET_URL, {"lat": f"{lat:.4f}", "lon": f"{lon:.4f}"}, attempts=2)       # MET asks for at most 4 decimals
+    return _met_to_open_meteo(raw, days, _tz_for(lat, lon))
 
 
 def fetch_forecast(lat: float, lon: float, days: int) -> dict:
-    return _get(FORECAST, {
-        "latitude": lat, "longitude": lon, "forecast_days": days, "timezone": "auto",
-        "current": "temperature_2m,wind_speed_10m,precipitation,weather_code",
-        "daily": "weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,"
-                 "precipitation_sum,precipitation_probability_max,wind_speed_10m_max,uv_index_max"})
+    """Open-Meteo forecast; if it fails, MET Norway's forecast as a clearly labelled backup."""
+    try:
+        return _get(FORECAST, {
+            "latitude": lat, "longitude": lon, "forecast_days": days, "timezone": "auto",
+            "current": "temperature_2m,wind_speed_10m,precipitation,weather_code",
+            "daily": "weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,"
+                     "precipitation_sum,precipitation_probability_max,wind_speed_10m_max,uv_index_max"}, attempts=2)
+    except WeatherError as primary:
+        log.warning("Open-Meteo forecast failed (%s); trying MET Norway", primary)
+        try:
+            return _fetch_met(lat, lon, days)
+        except WeatherError as backup:
+            log.error("MET Norway backup also failed: %s", backup)
+            raise WeatherError(f"{primary} The backup weather source (MET Norway) also failed.", primary.status)
 
 
 def _ge(x, v):
@@ -662,7 +767,7 @@ def build_advisory(location: dict, raw: dict) -> dict:
         d["advisories"] = advise_day(d)
         days.append(d)
     return {"location": location, "current": raw.get("current"), "days": days, "rules": RULES_TEXT,
-            "retrieved_at": raw.get("_retrieved_at")}
+            "retrieved_at": raw.get("_retrieved_at"), "provider": raw.get("_provider", "open-meteo")}
 
 
 def advise_manual(m: "ManualWeather", today: date) -> dict:
@@ -1228,8 +1333,17 @@ def weather_advisory(req: WeatherRequest):
             loc = geocode(req.location)
             result = build_advisory(loc, fetch_forecast(loc["latitude"], loc["longitude"], req.days))
             age = max(0.0, time.time() - result["retrieved_at"]) if result.get("retrieved_at") else 0.0
-            result["weather_source"] = ("Open-Meteo forecast (retrieved live just now)" if age < 60
-                                        else f"Open-Meteo forecast (live data retrieved {round(age / 60)} min ago)")
+            when = "retrieved live just now" if age < 60 else f"live data retrieved {round(age / 60)} min ago"
+            if result["provider"] == "met-norway":
+                result["weather_source"] = (f"MET Norway forecast (backup source, because Open-Meteo was unavailable; {when}; no rain-probability or "
+                                            "UV values; today covers the remaining hours only)")
+                credit = ["Weather data: MET Norway (CC BY 4.0)"]
+            else:
+                result["weather_source"] = f"Open-Meteo forecast ({when})"
+                credit = ["Weather data: Open-Meteo.com (CC BY 4.0)"]
+            if loc.get("provider") == "nominatim":
+                credit.append("Place search: © OpenStreetMap contributors (Nominatim)")
+            result["attribution"] = "; ".join(credit)
             result["weather_source_type"] = "live_forecast"
             result["retrieved_at"] = (datetime.fromtimestamp(time.time() - age, timezone.utc).isoformat(timespec="seconds"))
         except WeatherError as e:                # includes LocationNotFound (404)

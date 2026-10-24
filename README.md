@@ -41,6 +41,7 @@ Copy `.env.example` to `.env` and fill it in.
 | `OPENAI_MODEL` | Text model (planning, valuation, chat, weather guidance). |
 | `OPENAI_VISION_MODEL` | **Required for Site Safety and Crack Analysis.** Must accept images. A text-only model (for example `openai/gpt-oss-20b`) cannot. |
 | `OPENAI_VISION_REASONING_EFFORT` | Optional, vision calls only (`none`, `low`, `medium`, `high` on Groq's Qwen 3.8). Empty = provider default, nothing is sent. |
+| `WEATHER_CONTACT` | E-mail or website put in the User-Agent sent to the weather backups (MET Norway and Nominatim require a contact). Default: the Netlify site URL. |
 | `AI_TIMEOUT_SECONDS` | Per-request timeout (default 60). |
 | `CORS_ORIGINS` | Allowed browser origins, comma separated: your local frontend and your Netlify URL. |
 
@@ -82,7 +83,7 @@ using supplied inputs, and CORS for localhost and a Netlify origin. **They canno
 
 ```bash
 python tests/live_check.py selftest                         # one command: health, model list, weather, safety + crack on a generated image
-BACKEND_URL=https://construction-intelligence-1.onrender.com python tests/live_check.py selftest   # against the deployed backend
+BACKEND_URL=https://construction-intelligence-2.onrender.com python tests/live_check.py selftest   # against the deployed backend
 python tests/live_check.py safety site1.jpg site2.jpg      # backend running with your real .env
 python tests/live_check.py cracks crack1.jpg crack2.jpg
 ```
@@ -115,7 +116,7 @@ Free Render services sleep when idle and take about a minute to wake, and the fi
 ## 6. Deploy the frontend on Netlify
 
 `netlify.toml` in the repo root tells Netlify to build in `frontend/` (`npm run build`, publish `dist`, Node 22) and sets
-`VITE_API_URL=https://construction-intelligence-1.onrender.com` (a plain URL, not a secret). `VITE_API_URL` is baked into the bundle at **build time**:
+`VITE_API_URL=https://construction-intelligence-2.onrender.com` (a plain URL, not a secret). `VITE_API_URL` is baked into the bundle at **build time**:
 change the value and redeploy (**Clear cache and deploy site**) whenever the backend URL changes. The app refuses to call the API if the value is not a plain URL.
 
 Manual alternative (Netlify Drop):
@@ -140,9 +141,8 @@ with an upstream problem; it is not a routing issue. "The server is temporarily 
 - Valuation, rent, ROI, material quantities and costs are AI estimates, **not verified market data or live rates**. Provide a verified local rate when you have one.
 - Quality depends on the model you configure; small or free-tier models may need a retry, and free tiers have rate limits that can change.
 - Image content and your text go to your AI provider. There is no login: do not expose the backend publicly with a key that has billing or a tight quota.
-- Weather forecasts come from Open-Meteo's free API (non-commercial use; limits are per IP address: 600/min, 5,000/hour, 10,000/day). Render's free tier shares
-  outbound IPs, so you can occasionally receive HTTP 429. The server retries briefly, caches results for 10 minutes, logs the real status and reason, and tells you the
-  cause; with your own entered conditions the result is labelled "not retrieved from a weather service". Thresholds are general rules, not site-specific limits.
+- Weather: the primary source is Open-Meteo's free API (non-commercial; limits per IP address, and Render's free tier shares outbound IPs, so HTTP 429 happens).
+  When Open-Meteo fails, the server automatically uses **MET Norway** for the forecast and **OpenStreetMap Nominatim** for place search (both keyless; attribution is shown in the app).
+  The result says which source answered. The MET Norway backup has no rain-probability, UV or feels-like values (shown as "No data", never guessed), and days are split by the
+  place's local time (estimated from longitude if Open-Meteo's place search was also unavailable). If every source fails, you can still enter conditions yourself, labelled as your own data. Thresholds are general rules, not site-specific limits.
 - Only the offline tests and one local end-to-end run (real uvicorn against a fake provider server) were executed during development. A live call to a real provider was **not** run; use `tests/live_check.py`.
-#   c o n s t r u c t i o n - i n t e l l i g e n c e - 2  
- 

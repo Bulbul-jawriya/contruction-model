@@ -7,4 +7,4 @@
 [build.environment]
   NODE_VERSION = "22"       # Vite 8 needs Node 20.19+ / 22.12+
   # Backend URL baked into the bundle at BUILD time (plain URL, no trailing slash, no Markdown). Not a secret.
-  VITE_API_URL = "https://construction-intelligence-1.onrender.com"
+  VITE_API_URL = "https://construction-intelligence-2.onrender.com"

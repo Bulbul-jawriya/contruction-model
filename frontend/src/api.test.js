@@ -14,11 +14,11 @@ afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.useRealTimers();
 
 describe("shared API utility", () => {
   it("calls the Render backend URL (trailing slash ignored) with the exact FastAPI path", async () => {
-    const api = await loadApi("https://construction-intelligence-1.onrender.com/");
+    const api = await loadApi("https://construction-intelligence-2.onrender.com/");
     fetchMock.mockReturnValue(reply(OK));
     await api("/api/weather/advisory", { json: { location: "Indore" } });
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("https://construction-intelligence-1.onrender.com/api/weather/advisory");
+    expect(url).toBe("https://construction-intelligence-2.onrender.com/api/weather/advisory");
     expect(init.method).toBe("POST");
     expect(init.headers).toEqual({ "Content-Type": "application/json" });
     expect(JSON.parse(init.body)).toEqual({ location: "Indore" });

@@ -1,8 +1,3 @@
-"""Offline tests. The AI provider is replaced by a fake at the HTTP layer (httpx.post), so these tests verify the
-plumbing: what is sent to the model (real image bytes, vision model, key, JSON mode), how replies are validated,
-and that failures become explicit errors instead of invented results.
-
-They do NOT prove a real model's image understanding. For that run tests/live_check.py with your own key and photos."""
 import base64
 import io
 import json
@@ -591,26 +586,26 @@ def test_weather_retries_a_rate_limit_then_succeeds(wx):
 
 
 def test_weather_persistent_rate_limit_names_the_real_cause(wx, caplog):
-    wx.script = [R(429, {"error": True, "reason": "Daily API request limit exceeded"})] * 3
+    wx.script = [R(429, {"error": True, "reason": "Daily API request limit exceeded"})] * 2 + [R(429)] * 2     # Open-Meteo x2, then the backup x2
     with caplog.at_level("ERROR", logger="construction-intelligence"):
         with pytest.raises(backend.WeatherError) as e:
             backend.geocode("Indore")
-    assert "HTTP 429" in str(e.value) and e.value.status == 503 and len(wx.calls) == 3
+    assert "HTTP 429" in str(e.value) and "backup" in str(e.value) and e.value.status == 503 and len(wx.calls) == 4
     assert "HTTP 429" in caplog.text and "Daily API request limit exceeded" in caplog.text     # status + provider body are logged
 
 
 def test_weather_client_error_shows_the_provider_reason_and_is_not_retried(wx):
-    wx.script = [R(400, {"error": True, "reason": "Parameter 'daily' has invalid value"})]
+    wx.script = [R(400, {"error": True, "reason": "Parameter 'daily' has invalid value"}), R(403)]          # primary 400 (once), backup 403 (once)
     with pytest.raises(backend.WeatherError) as e:
         backend.fetch_forecast(1, 2, 3)
-    assert "HTTP 400" in str(e.value) and "invalid value" in str(e.value) and len(wx.calls) == 1
+    assert "HTTP 400" in str(e.value) and "invalid value" in str(e.value) and "backup" in str(e.value) and len(wx.calls) == 2
 
 
 @pytest.mark.parametrize("script,status,needle", [
-    ([httpx.ReadTimeout("slow")] * 3, 504, "too long"),
-    ([httpx.ConnectError("dns")] * 3, 502, "could not connect"),
-    ([R(503), R(503), R(503)], 502, "http 503"),
-    ([httpx.Response(200, text="<html>oops</html>")], 502, "unreadable"),
+    ([httpx.ReadTimeout("slow")] * 4, 504, "too long"),
+    ([httpx.ConnectError("dns")] * 4, 502, "could not connect"),
+    ([R(503)] * 4, 502, "http 503"),
+    ([httpx.Response(200, text="<html>oops</html>")] * 2, 502, "unreadable"),
 ])
 def test_weather_transport_failures_are_classified(wx, script, status, needle):
     wx.script = list(script)
@@ -640,7 +635,7 @@ def test_live_weather_endpoint_end_to_end_is_labelled_live(fake, wx):
 
 
 def test_rate_limited_live_weather_falls_back_to_labelled_user_data(fake, wx):
-    wx.script = [R(429)] * 3
+    wx.script = [R(429)] * 4
     r = client.post("/api/weather/advisory", json={"location": "Indore", "manual": {"temperature_max_c": 33, "wind_kmh": 12, "rain_mm": 0}}).json()
     d = r["data"]
     assert d["weather_source_type"] == "user_provided" and "not retrieved" in d["weather_source"] and "HTTP 429" in d["live_weather_error"]
@@ -649,7 +644,7 @@ def test_rate_limited_live_weather_falls_back_to_labelled_user_data(fake, wx):
 
 
 def test_rate_limited_live_weather_without_manual_input_is_an_explicit_error(fake, wx):
-    wx.script = [R(429)] * 3
+    wx.script = [R(429)] * 4
     assert_error(client.post("/api/weather/advisory", json={"location": "Indore"}), 503, "HTTP 429")
     assert fake.calls == []
 
@@ -698,3 +693,89 @@ def test_cached_live_weather_is_labelled_with_its_age_not_just_now(fake, wx, mon
     second = client.post("/api/weather/advisory", json={"location": "Indore", "days": 2}).json()["data"]
     assert len(wx.calls) == 2                                                  # served from cache, no new provider call
     assert second["weather_source_type"] == "live_forecast" and "5 min ago" in second["weather_source"] and "just now" not in second["weather_source"]
+
+
+# ------------------------------------------------------------------ weather backups: Nominatim (place search) + MET Norway (forecast)
+NOMINATIM_OK = [{"lat": "22.7203616", "lon": "75.8681996", "name": "Indore", "display_name": "Indore, Madhya Pradesh, India",
+                 "address": {"state": "Madhya Pradesh", "country": "India"}}]
+
+
+def met_point(time_utc, temp, wind, n1=None, n6=None, sym=None):
+    data = {"instant": {"details": {"air_temperature": temp, "wind_speed": wind}}}
+    if n1 is not None:
+        data["next_1_hours"] = {"summary": {"symbol_code": sym or "clearsky_day"}, "details": {"precipitation_amount": n1}}
+    if n6 is not None:
+        data["next_6_hours"] = {"summary": {"symbol_code": sym or "clearsky_day"}, "details": {"precipitation_amount": n6}}
+    return {"time": time_utc, "data": data}
+
+
+# local zone for Indore longitude is estimated as UTC+5 here (no Open-Meteo timezone hint was learned)
+MET_OK = {"type": "Feature", "properties": {"meta": {"updated_at": "2026-10-24T05:00:00Z"}, "timeseries": [
+    met_point("2026-10-24T06:00:00Z", 30.0, 5.0, n1=0.0, n6=2.0),                       # 24th 11:00 local
+    met_point("2026-10-24T09:00:00Z", 34.0, 8.0, n1=2.0, n6=2.0, sym="heavyrainandthunder"),   # 24th 14:00 local, thunder
+    met_point("2026-10-24T20:00:00Z", 22.0, 3.0, n1=1.5, n6=1.5),                       # 25th 01:00 local
+    met_point("2026-10-25T06:00:00Z", 31.0, 6.0, n6=4.0),                               # 25th 11:00 local, 6-hourly tail (no next_1_hours)
+]}}
+
+
+def test_nominatim_is_used_when_open_meteo_place_search_is_rate_limited(wx):
+    wx.script = [R(429), R(429), R(200, NOMINATIM_OK)]
+    loc = backend.geocode("Indore")
+    assert loc["provider"] == "nominatim" and loc["name"] == "Indore" and loc["region"] == "Madhya Pradesh" and loc["country"] == "India"
+    assert loc["latitude"] == pytest.approx(22.72036) and loc["longitude"] == pytest.approx(75.8682)
+    nom = wx.calls[2]
+    assert nom["url"] == "https://nominatim.openstreetmap.org/search" and nom["params"]["format"] == "jsonv2" and nom["params"]["limit"] == 1
+    assert "construction-intelligence" in nom["headers"]["User-Agent"] and "(" in nom["headers"]["User-Agent"]      # identifying UA with a contact
+
+
+def test_nominatim_no_match_is_a_404_not_a_server_error(wx):
+    wx.script = [R(503), R(503), R(200, [])]
+    with pytest.raises(backend.LocationNotFound):
+        backend.geocode("Zzzzzz")
+
+
+def test_user_agent_contact_is_configurable(monkeypatch):
+    monkeypatch.setenv("WEATHER_CONTACT", "ops@example.org")
+    assert backend._wx_user_agent() == "construction-intelligence/2.2 (ops@example.org)"
+
+
+def test_met_norway_payload_is_converted_into_daily_values_without_inventing_any(wx):
+    d = backend._met_to_open_meteo(MET_OK, 5, backend.timezone(backend.timedelta(hours=5)))["daily"]
+    assert d["time"] == ["2026-10-24", "2026-10-25"]
+    assert d["temperature_2m_max"] == [34.0, 31.0] and d["temperature_2m_min"] == [30.0, 22.0]
+    assert d["precipitation_sum"] == [2.0, 5.5]                       # 0+2 hourly; 1.5 hourly + 4.0 from the 6-hourly tail
+    assert d["wind_speed_10m_max"] == [28.8, 21.6]                    # m/s x 3.6 -> km/h
+    assert d["weather_code"] == [95, None]                            # thunder symbol -> storm code on that day only
+    assert d["precipitation_probability_max"] == [None, None] and d["uv_index_max"] == [None, None] and d["apparent_temperature_max"] == [None, None]
+    assert backend._met_to_open_meteo(MET_OK, 1, backend.timezone.utc)["daily"]["time"] == ["2026-10-24"]       # days limit respected
+
+
+def test_met_norway_forecast_is_the_backup_when_open_meteo_fails(wx):
+    wx.script = [R(503), R(503), R(200, MET_OK)]
+    raw = backend.fetch_forecast(22.7204, 75.8682, 2)
+    met = wx.calls[2]
+    assert met["url"] == "https://api.met.no/weatherapi/locationforecast/2.0/compact" and met["params"] == {"lat": "22.7204", "lon": "75.8682"}
+    assert "construction-intelligence" in met["headers"]["User-Agent"]
+    assert raw["_provider"] == "met-norway" and len(raw["daily"]["time"]) == 2 and raw["current"]["wind_speed_10m"] == 18.0
+
+
+def test_both_forecast_sources_failing_is_reported_honestly(wx):
+    wx.script = [R(429)] * 4
+    with pytest.raises(backend.WeatherError) as e:
+        backend.fetch_forecast(1, 2, 3)
+    assert "HTTP 429" in str(e.value) and "MET Norway" in str(e.value) and e.value.status == 503
+
+
+def test_endpoint_with_both_backups_is_labelled_and_attributed(fake, wx):
+    wx.script = [R(429), R(429), R(200, NOMINATIM_OK),        # place search: Open-Meteo x2 fails, Nominatim answers
+                 R(503), R(503), R(200, MET_OK)]              # forecast: Open-Meteo x2 fails, MET Norway answers
+    r = client.post("/api/weather/advisory", json={"location": "Indore", "days": 2}).json()
+    d = r["data"]
+    assert r["success"] and d["weather_source_type"] == "live_forecast" and d["provider"] == "met-norway"
+    assert "MET Norway forecast (backup source" in d["weather_source"] and "no rain-probability or UV" in d["weather_source"]
+    assert "MET Norway (CC BY 4.0)" in d["attribution"] and "OpenStreetMap" in d["attribution"]
+    assert d["location"]["name"] == "Indore" and [x["date"] for x in d["days"]] == ["2026-10-24", "2026-10-25"]
+    levels = {a["activity"]: a["level"] for a in d["days"][0]["advisories"]}
+    assert levels["Roofing and work at height"] == "avoid"            # thunderstorm symbol on day 1 -> avoid
+    assert levels["Exterior painting"] == "avoid" and levels["Concrete pouring"] == "caution"      # 2 mm rain trips the >=1 mm rules
+    assert levels["Heat stress for crews"] == "ok" and "feels-like" not in json.dumps(d["days"][0]["advisories"])   # no feels-like data: nothing invented

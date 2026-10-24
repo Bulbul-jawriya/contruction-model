@@ -1,13 +1,4 @@
-"""LIVE check against your real AI provider (not part of the offline test suite).
 
-It uploads two different photos to a running backend and shows whether the answers differ and are grounded in each image.
-Usage (backend running with your real .env):
-    python tests/live_check.py selftest                     # every dependency once, using a generated test image
-    python tests/live_check.py safety  site1.jpg site2.jpg
-    python tests/live_check.py cracks  crack1.jpg crack2.jpg
-Optional: BACKEND_URL=https://your-service.onrender.com python tests/live_check.py ...
-Read the printed results yourself: do they describe what is actually in each photo?
-"""
 import mimetypes
 import os
 import sys

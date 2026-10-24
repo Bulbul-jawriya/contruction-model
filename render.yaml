@@ -18,5 +18,7 @@ services:
         value: qwen/qwen3.8-27b
       - key: CORS_ORIGINS
         value: https://construction-intelligence-7.netlify.app,http://localhost:5173
+      - key: WEATHER_CONTACT
+        value: https://construction-intelligence-7.netlify.app   # replace with your e-mail; MET Norway/Nominatim require a contact
       - key: OPENAI_API_KEY
         sync: false            # secret: enter it in the Render dashboard, never in Git

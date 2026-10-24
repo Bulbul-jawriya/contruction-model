@@ -158,13 +158,14 @@ describe("Weather", () => {
     await user.click(screen.getByRole("button", { name: "Get advisory" }));
     expect(await screen.findByText(/Live weather failed: .*HTTP 429/)).toBeInTheDocument();
     cleanup();
-    fetchMock.mockReturnValueOnce(reply(envelope({ weather_source: "Open-Meteo forecast (retrieved live just now)", weather_source_type: "live_forecast",
+    fetchMock.mockReturnValueOnce(reply(envelope({ weather_source: "Open-Meteo forecast (retrieved live just now)", weather_source_type: "live_forecast", attribution: "Weather data: Open-Meteo.com (CC BY 4.0)",
       location: { name: "Indore" }, ai_guidance: null, days: [{ date: "2026-10-23", tmax: 30, tmin: 22, rain: 0, wind: 10, advisories: [] }], rules: [] })));
     render(<Weather />);
     const user2 = userEvent.setup();
     await user2.type(screen.getByLabelText("City or town"), "Indore");
     await user2.click(screen.getByRole("button", { name: "Get advisory" }));
     expect(await screen.findByText(/retrieved live just now/)).toBeInTheDocument();
+    expect(screen.getByText(/Weather data: Open-Meteo/)).toBeInTheDocument();
     expect(screen.queryByText(/your own entered data/)).not.toBeInTheDocument();
   });
 

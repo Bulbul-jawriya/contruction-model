@@ -50,6 +50,7 @@ export default function Weather() {
         <Panel>
           <ResultMeta result={result} />
           <p className="font-semibold text-steel">Weather source: {d.weather_source}</p>
+          {d.attribution && <p className="text-xs text-mute">{d.attribution}</p>}
           {d.weather_source_type === "user_provided" && (
             <p role="note" className="mt-2 rounded border border-warn bg-amber-50 px-3 py-2 text-sm text-steel">
               This is <strong>your own entered data, not a live forecast.</strong>
