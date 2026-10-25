@@ -51,7 +51,7 @@ export default function Valuation() {
           <Panel>
             <ResultMeta result={result} />
             <p className="text-mute">Indicative value range</p>
-            <p className="font-display text-4xl font-bold text-steel">{inr(d.estimated_value_low)} to {inr(d.estimated_value_high)}</p>
+            <p className="font-display text-4xl font-bold text-ink">{inr(d.estimated_value_low)} to {inr(d.estimated_value_high)}</p>
             <p className="text-mute">Midpoint {inr(d.estimated_value_mid)} · about {inr(d.price_per_sqft_low)} to {inr(d.price_per_sqft_high)} per sq ft · confidence: {label(d.confidence)}</p>
             <p className="mt-2 text-sm text-mute">{d.data_source}</p>
           </Panel>

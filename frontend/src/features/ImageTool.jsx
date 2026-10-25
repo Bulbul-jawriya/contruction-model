@@ -47,7 +47,7 @@ export default function ImageTool({ endpoint, buttonLabel, descriptionLabel, des
           <ErrorBox message={localError} />
           {preview && (
             <figure>
-              <img src={preview} alt="Selected upload" className="max-h-56 rounded border border-line" />
+              <img src={preview} alt="Selected upload" className="max-h-56 rounded-lg border border-line" />
               <figcaption className="mt-1 text-sm text-mute">{file.name} ({kb(file.size)})</figcaption>
             </figure>)}
           <Field label={descriptionLabel} hint={descriptionHint}>

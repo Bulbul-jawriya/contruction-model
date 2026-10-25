@@ -29,8 +29,8 @@ export default function Weather() {
             <div className="w-32"><Field label="Days"><Select options={[1, 2, 3, 5, 7]} value={f.days} onChange={set("days")} /></Field></div>
           </div>
           <Field label="Planned activities (optional)"><Textarea rows={2} value={f.planned} onChange={set("planned")} placeholder="e.g. slab pour on level 2, crane lifting in the afternoon" /></Field>
-          <details className="rounded border border-line bg-white p-3">
-            <summary className="cursor-pointer font-semibold text-steel">Enter weather conditions myself</summary>
+          <details className="rounded-lg border border-line bg-tint p-3">
+            <summary className="cursor-pointer font-semibold text-ink">Enter weather conditions myself</summary>
             <p className="my-2 text-sm text-mute">Used only when live weather can't be retrieved, or when you leave the location empty. Results will be labelled as your own input.</p>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Field label="Max temp (°C)"><Input type="number" value={f.tmax} onChange={set("tmax")} /></Field>
@@ -49,14 +49,14 @@ export default function Weather() {
       {d && (<>
         <Panel>
           <ResultMeta result={result} />
-          <p className="font-semibold text-steel">Weather source: {d.weather_source}</p>
+          <p className="font-semibold text-ink">Weather source: {d.weather_source}</p>
           {d.attribution && <p className="text-xs text-mute">{d.attribution}</p>}
           {d.weather_source_type === "user_provided" && (
-            <p role="note" className="mt-2 rounded border border-warn bg-amber-50 px-3 py-2 text-sm text-steel">
+            <p role="note" className="mt-2 rounded-lg border border-warn/60 bg-warn/10 px-3 py-2 text-sm text-ink">
               This is <strong>your own entered data, not a live forecast.</strong>
               {d.live_weather_error ? ` Live weather failed: ${d.live_weather_error}` : ""}
             </p>)}
-          {d.location && <h3 className="text-2xl font-bold text-steel">{[d.location.name, d.location.region, d.location.country].filter(Boolean).join(", ")}</h3>}
+          {d.location && <h3 className="text-2xl font-bold text-ink">{[d.location.name, d.location.region, d.location.country].filter(Boolean).join(", ")}</h3>}
           {d.current && <p className="text-mute">Now: {d.current.temperature_2m}°C, wind {d.current.wind_speed_10m} km/h, precipitation {d.current.precipitation} mm</p>}
         </Panel>
         {g ? (
@@ -73,7 +73,7 @@ export default function Weather() {
         <div className="grid gap-4 md:grid-cols-2">
           {arr(d.days).map((day) => (
             <Panel key={day.date}>
-              <h3 className="text-xl font-bold text-steel">{new Date(day.date + "T00:00").toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short" })}</h3>
+              <h3 className="text-xl font-bold text-ink">{new Date(day.date + "T00:00").toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short" })}</h3>
               <p className="mb-3 text-sm text-mute">
                 {day.tmin ?? "–"} to {day.tmax ?? "–"}°C · rain {day.rain ?? "–"} mm{day.prob != null ? ` (${day.prob}%)` : ""} · wind {day.wind ?? "–"} km/h
               </p>

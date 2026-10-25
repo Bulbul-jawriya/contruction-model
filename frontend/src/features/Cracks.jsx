@@ -27,10 +27,10 @@ function Result({ d }) {
       <Block title="Recommended actions" items={d.recommended_actions} />
       <Block title="Limitations" items={d.limitations} />
       {aid?.overlay_image && (
-        <details className="rounded border border-line bg-white p-3">
-          <summary className="cursor-pointer font-semibold text-steel">Optional image-filter aid (OpenCV)</summary>
+        <details className="rounded-lg border border-line bg-tint p-3">
+          <summary className="cursor-pointer font-semibold text-ink">Optional image-filter aid (OpenCV)</summary>
           <p className="my-2 text-sm text-mute">{text(aid.label)}</p>
-          <img src={aid.overlay_image} alt="Photo with dark thin lines highlighted in red" className="max-h-96 rounded border border-line" />
+          <img src={aid.overlay_image} alt="Photo with dark thin lines highlighted in red" className="max-h-96 rounded-lg border border-line" />
           <p className="mt-1 text-sm text-mute">Lines highlighted: {aid.lines_found ?? 0}. Longest: {aid.longest_percent_of_diagonal ?? 0}% of the image diagonal.</p>
         </details>)}
       {d.model && <p className="text-sm text-mute">Analysed by {d.model}.</p>}

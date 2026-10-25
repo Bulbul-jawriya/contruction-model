@@ -25,7 +25,7 @@ function Result({ d }) {
       </div>
 
       <div>
-        <h3 className="text-lg font-bold text-steel">PPE observed</h3>
+        <h3 className="text-lg font-bold text-ink">PPE observed</h3>
         <p className="text-sm text-mute">
           {ppe.people_visible === null || ppe.people_visible === undefined ? "Number of people visible: unclear." : `People visible: ${ppe.people_visible}.`} {text(ppe.summary)}
         </p>
@@ -41,10 +41,10 @@ function Result({ d }) {
       </div>
 
       <div>
-        <h3 className="text-lg font-bold text-steel">Hazards</h3>
+        <h3 className="text-lg font-bold text-ink">Hazards</h3>
         {hazards.length ? (
           <ul className="mt-2 space-y-3">{hazards.map((h, i) => (
-            <li key={i} className="rounded border border-line bg-white p-3">
+            <li key={i} className="rounded-lg border border-line bg-tint p-3">
               <p><span className={`font-bold ${SEVERITY[h.severity] || ""}`}>{label(h.severity)} severity</span>{" · "}
                 <span className="text-sm text-mute">{h.basis === "observed" ? "Observed in the photo" : "Inferred (interpretation)"}</span></p>
               <p className="font-medium">{text(h.description)}</p>

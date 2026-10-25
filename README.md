@@ -146,3 +146,5 @@ with an upstream problem; it is not a routing issue. "The server is temporarily 
   The result says which source answered. The MET Norway backup has no rain-probability, UV or feels-like values (shown as "No data", never guessed), and days are split by the
   place's local time (estimated from longitude if Open-Meteo's place search was also unavailable). If every source fails, you can still enter conditions yourself, labelled as your own data. Thresholds are general rules, not site-specific limits.
 - Only the offline tests and one local end-to-end run (real uvicorn against a fake provider server) were executed during development. A live call to a real provider was **not** run; use `tests/live_check.py`.
+#   c o n s t r u c t i o n - m u l t i m o d e l  
+ 
